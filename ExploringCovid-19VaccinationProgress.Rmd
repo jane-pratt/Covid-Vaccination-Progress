@@ -2,7 +2,12 @@
 title: "Exploring Covid-19 Vaccination Progress"
 author: "Jane Pratt"
 date: "01/04/2021"
-output: html_document
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    theme: cosmo
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -31,13 +36,15 @@ For this project, we'll be exploring the data about Covid-19 Vaccinations gather
 
 ## Libraries
 
-```{r, include= FALSE}
+```{r, include= FALSE, message = FALSE}
 library(tidyverse)
+library(magrittr)
 ```
 
 # Loading the Data
 
 ## Downloading the data
+
 We'll be using the Data on COVID-19 (coronavirus) vaccinations from Our World in Data. For details of the data set, see the Further Information section at the end of this document. 
 
 The data is updated daily, so if the file should be downloaded if it either does not exist locally, or has not been modified for more than 1 day.
@@ -54,9 +61,177 @@ result <- download.file(source_location, destfile = local_file_location,
 Let's start by reading in the data from the local CSV file, and having a look at the structure of the data:
 
 ```{r}
-vaccination_data <- read.csv(save_file)
-str(vaccination_data)
+vaccination_data <- read.csv(local_file_location)
+str(vaccination_data, vec.len = 3)
 ```
+
+Our World in Data update this csv file once per day, with one observation (row) added each day for each country which has updated vaccination statistics that day. 
+
+The first three variables (columns) are fairly straightforward to understand:
+
+- `location`: name of the country or other location to which the results apply 
+- `iso-code`: a unique identifier for the location.This is based on ISO-3166 standards **link and will allow us to link this data to other data sets
+- `date`: the date that the information was recorded
+
+Many of the vaccines require more than one dose to be fully effective, so several different variables are being tracked:
+
+- `total_vaccinations`: total number of doses administered. If a person receives one dose of the vaccine, this metric goes up by 1. If they receive a second dose, it goes up by 1 again.
+- `people_vaccinated`: total number of people who have received at least one vaccine dose. If a person receives the first dose of a 2-dose vaccine, this metric goes up by 1. If they receive the second dose, the metric stays the same.
+- `people_fully_vaccinated`: total number of people who have received all doses prescribed by the vaccination protocol. If a person receives the first dose of a 2-dose vaccine, this metric stays the same. If they receive the second dose, the metric goes up by 1.
+
+There are also separate measures for `daily_vaccinations_raw` and `daily_vaccinations`. The raw figure is 'provided for data checks and transparency' and Our World in Data recommend using `daily_vaccinations` instead.
+
+# Cleaning the data
+
+## Removing Unwanted columns
+
+We won't be using the daily data, so we can remove those columns:
+
+```{r}
+cleaned_vacc_data <- vaccination_data %>%
+  select(!starts_with('daily'))
+str(cleaned_vacc_data, vec.len = 3)
+```
+
+## Date format
+
+The `date` variable is being stored in `character` format, so it should to be converted to a `Date`.
+
+```{r}
+cleaned_vacc_data %<>%
+  mutate(date = as.Date(date, format= "%Y-%m-%d"))
+cleaned_vacc_data
+```
+
+## Missing Dates
+
+Browsing through the data, we can see that different countries started reporting their vaccinations at different times, and some have gaps between records. 
+
+Let's summarise the first and last date when each country recorded vaccination numbers, along with the total number of reports made in that time span:
+
+```{r}
+vacc_report_dates_by_country <- 
+  cleaned_vacc_data %>%
+  group_by(location) %>%
+  summarise(first_vacc_record = min(date),
+            last_vacc_record = max(date),
+            date_span = difftime(last_vacc_record, 
+                                 first_vacc_record, 
+                                 units = 'days') + 1,
+            vacc_report_count = n_distinct(date))
+vacc_report_dates_by_country
+```
+
+It's pretty easy to see that the countries have different dates for their first and last record, but for most countries the `date_span` and `vacc_report_count` is the same, meaning that there is a record for every day during that time. Sometimes there are exceptions, and there will be days with missing data:
+
+```{r}
+vacc_report_dates_by_country %>%
+  filter(difftime(last_vacc_record, 
+                  first_vacc_record, 
+                  units = 'days')
+         - vacc_report_count > 0)
+```
+
+We want to know the total figures for each country on any given date, so we'll need to generate records for the missing dates. We can do this using the `complete()` function from dplyr:
+
+```{r}
+complete_vacc_data <-
+  cleaned_vacc_data %>% 
+  complete(location, date = seq.Date(min(date), max(date), by = 'day') )
+complete_vacc_data
+```
+
+```{r}
+summary(complete_vacc_data)
+```
+
+## NA Values
+
+The summary shows that we now have NA values in all of our numeric columns, and the table of data shows that there are also values in the iso_code column. 
+
+### ISO Code
+
+When we completed the missing dates, the corresponding ISO Codes were not filled in. We can add these by getting a data frame with each location and ISO code (from the original data), then joining that to the `complete_vacc_data` data 
+
+```{r}
+iso_codes <- vaccination_data %>%
+  distinct(location, iso_code)
+complete_vacc_data %<>% select(-iso_code)
+complete_vacc_data <- left_join(complete_vacc_data, iso_codes, 
+                                 by = 'location')  
+complete_vacc_data
+```
+
+### Total Vaccination Numbers
+
+The vaccination figures left in our data are running totals, which means that we would not expect them to decrease. We won't make any assumptions about how many vaccinations were performed on any days where there is no data, but will use the `tidyr` `fill` function to copy totals down from the last day with data:
+
+```{r}
+complete_vacc_data %<>% 
+  arrange(location, date) %>%
+  group_by(location) %>%
+  fill(c(total_vaccinations, people_vaccinated, people_fully_vaccinated,
+         total_vaccinations_per_hundred, people_vaccinated_per_hundred,
+         people_fully_vaccinated_per_hundred, people_fully_vaccinated_per_hundred))
+complete_vacc_data
+```
+
+We now have totals for every country once they report their first figures, but before that the values will be NA. Again, we won't make any assumptions about any vaccinations before the first report, so we'll set these values to 0.
+
+```{r}
+complete_vacc_data[is.na(complete_vacc_data)] = 0
+complete_vacc_data
+```
+
+## Removing Data Which is Not For Sovereign Nations
+
+Some of our data is not for sovereign nations which mean they don't have valid ISO Codes. We'll store that data separately before removing it from our main data frame:
+
+```{r}
+non_nation_data <- complete_vacc_data %>%
+  filter(!nchar(iso_code) == 3)
+non_nation_data
+```
+```{r}
+non_nation_data %>% distinct(iso_code)
+```
+
+```{r}
+continent_vacc_data <- non_nation_data %>%
+  filter(location %in% c('Africa', 'Asia', 'Europe', 'North America', 'Oceania', 'South America'))
+
+continent_vacc_data
+```
+
+```{r}
+national_vacc_data <- complete_vacc_data %>%
+  filter(nchar(iso_code) == 3)
+
+national_vacc_data
+```
+
+We now have 3 data frames that we may want to use for reporting and visualising our data:
+
+- complete_vacc_data - data for all countries and regions
+- national_vacc_data - data for all sovereign nations with ISO 3166-1 codes
+- continent_vacc_data - summary data for continents
+
+## Converting character columns to factors
+
+We will complete the data cleaning process by converting the 2 string columns to factors. We'll do this for all 3 data frames:
+
+```{r}
+complete_vacc_data %<>%
+  mutate(location = as.factor(location)) %>%
+  mutate(iso_code = as.factor(iso_code))
+national_vacc_data %<>%
+  mutate(location = as.factor(location)) %>%
+  mutate(iso_code = as.factor(iso_code))
+continent_vacc_data %<>%
+  mutate(location = as.factor(location)) %>%
+  mutate(iso_code = as.factor(iso_code))
+```
+
 
 
 
