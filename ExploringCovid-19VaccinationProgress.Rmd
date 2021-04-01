@@ -1,0 +1,69 @@
+---
+title: "Exploring Covid-19 Vaccination Progress"
+author: "Jane Pratt"
+date: "01/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+For this project, we'll be exploring the data about Covid-19 Vaccinations gathered by "Our World In Data". 
+
+## Goals
+
+- To show the total number of people vaccinated worldwide:
+  * At the current time
+  * Visualizing the total over time
+- To show the number of countries reporting milestones over time:
+- To show the percentage of the population vaccinated by each country:
+  * Listing the current results in a sortable and searchable table
+  * Visualizing the current results in a choropleth map
+  * Visualizing the current results in a dot density map
+  * Visualizing the results for the top n countries over time in an animated bar chart
+- To visualize the vaccination progress on a choropleth map
+- To explore the potential relationship between  various economic measurements and vaccination rates, for example:
+  * GDP and / or GDP per capita
+  * World Bank Income Income Groups
+
+## Libraries
+
+```{r, include= FALSE}
+library(tidyverse)
+```
+
+# Loading the Data
+
+## Downloading the data
+We'll be using the Data on COVID-19 (coronavirus) vaccinations from Our World in Data. For details of the data set, see the Further Information section at the end of this document. 
+
+The data is updated daily, so if the file should be downloaded if it either does not exist locally, or has not been modified for more than 1 day.
+
+```{r get_data}
+source_location <- 'https://raw.githubusercontent.com/owid/covid-19-data/master/public/data/vaccinations/vaccinations.csv'
+local_file_location <- 'Data/covid_Vaccination_data.csv'
+result <- download.file(source_location, destfile = local_file_location, 
+                          method="wininet", quiet = TRUE)  
+```
+
+## Reading the Local Data
+
+Let's start by reading in the data from the local CSV file, and having a look at the structure of the data:
+
+```{r}
+vaccination_data <- read.csv(save_file)
+str(vaccination_data)
+```
+
+
+
+# Further Information
+
+Description of the Our World in Data COVID-19 Vaccination data: 
+https://github.com/owid/covid-19-data/tree/master/public/data/vaccinations
+
+
+
